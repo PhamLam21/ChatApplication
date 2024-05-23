@@ -23,9 +23,7 @@ class AppChat {
     private:
         static AppChat* _instance;
         static ConnectionManager* connmgr;
-
         AppChat();
-        ~AppChat();
     public:
         static AppChat* getInstance(int portno);
         void displayMenu();

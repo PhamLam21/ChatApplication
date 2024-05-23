@@ -16,7 +16,6 @@ AppChat* AppChat::getInstance(int portno)
 }
 
 AppChat::AppChat() {}
-AppChat::~AppChat() {}
 
 void AppChat::displayMenu()
 {
@@ -68,7 +67,7 @@ int AppChat::onStart()
         {
             case 1:
                 displayHelp();
-                return 0;
+                break;
 
             case 2:
                 connmgr->displayIPAdrress();

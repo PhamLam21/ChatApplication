@@ -53,16 +53,9 @@ class ConnectionManager {
         void displayPortNumber();
         int connectToDestination(string& destinationIP, int port);
         void displayAllActiveConnection();
-        void addConnection(const string& ipAddress, int port);
         bool terminateConnection(int connectionID);
         bool senDataToConnection(int connectionID);
         int tcpOpen(tcp_socket_t** socket, int port);
-        void tcpClose(tcp_socket_t** socket, int port);
-        void tcpSend(tcp_socket_t* socket, void* buffer, int* size );
-        void tcpRecevice(tcp_socket_t* socket, void* buffer, int* size );
-        void tcpGetIPAddress(tcp_socket_t* socket, string& ipAddress);
-        void tcpGetPort(tcp_socket_t* socket, int* port);
-        void tcpGetSd(tcp_socket_t* socket, int* sd);
         int onStart();
 };
 
