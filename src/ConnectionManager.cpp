@@ -2,7 +2,6 @@
 #include "ConnectionManager.hpp"
 
 static struct pollfd *poll_fds = NULL;
-static tcp_socket_t serverConnection;
 static vector<tcp_socket_t> activeConnections;
 static int serverFd;
 
@@ -53,6 +52,7 @@ int ConnectionManager::tcpOpen(tcp_socket_t** s, int port)
     *s = tmpSocket;
     return TCP_NO_ERROR;
 }
+
 static int tcpWaitForConnection(tcp_socket_t *socket, tcp_socket_t **newSocket)
 {
     int result;
@@ -72,17 +72,24 @@ static int tcpWaitForConnection(tcp_socket_t *socket, tcp_socket_t **newSocket)
     *newSocket = tmpSocket;
     return TCP_NO_ERROR;
 }
+void reorganizeConnectionIds(std::vector<tcp_socket_t>& connections) {
+    int newId = 0;
+    for (tcp_socket_t& conn : connections) {
+        conn.id = newId++;
+    }
+}
 static void* connectionManagerThread(void *arg)
 {   
     int success = FAILURE;
     int poll_res;
     int connCounter = 0;
     int numbRead;
-    tcp_socket_t* sPointer = NULL;
+    tcp_socket_t* sPointer = (tcp_socket_t*) arg;
+    tcp_socket_t* tmpSocket = NULL;
     tcp_socket_t dumpy;
 
     poll_fds = (struct pollfd *)malloc(sizeof(struct pollfd));
-    poll_fds[0].fd = serverConnection.sd;
+    poll_fds[0].fd = sPointer->sd;
     poll_fds[0].events = POLLIN;
 
     while ((poll_res = poll(poll_fds, (connCounter+1), TIMEOUT*1000)) || connCounter) {
@@ -93,49 +100,60 @@ static void* connectionManagerThread(void *arg)
         if ((poll_fds[0].revents & POLLIN) && connCounter < MAX_PENDING) {
             
             // Blocks until a connection is processed
-            if((tcpWaitForConnection(&serverConnection, &(sPointer))) != TCP_NO_ERROR) {
+            if((tcpWaitForConnection(sPointer, &(tmpSocket))) != TCP_NO_ERROR) {
                 cerr << time(NULL) << " connectionManagerThread: failed to accept new connection (" << success << ")" << endl; 
             }
 
-            cout << "tmpSocket->sd : " << sPointer->sd  << endl;
-            cout << "Port: " << sPointer->port << endl;
-            cout << "IP: " << sPointer->ipAddress << endl;
+            cout << "tmpSocket->sd : " << tmpSocket->sd  << endl;
+            cout << "Port: " << tmpSocket->port << endl;
+            cout << "IP: " << tmpSocket->ipAddress << endl;
 
             connCounter++; // Increment number of connections
             poll_fds = (struct pollfd *)realloc(poll_fds, sizeof(struct pollfd)*(connCounter+1)); // Increase poll_fd array size
-            poll_fds[connCounter].fd = sPointer->sd;
+            poll_fds[connCounter].fd = tmpSocket->sd;
             poll_fds[connCounter].events = POLLIN | POLLHUP;
 
             // Push to list active connection
-            activeConnections.push_back(*sPointer);
+            activeConnections.push_back(*tmpSocket);
             poll_res--;
         }
 
         // When an event is received from Client socket
         for (int i = 1; i < (connCounter+1) && poll_res > 0; i++) {
             if((poll_fds[i].revents & POLLIN)) {
-                char reciveBuffer[100];
-                memset(reciveBuffer, '0', sizeof(reciveBuffer));
-                numbRead = read(poll_fds[i].fd, reciveBuffer, sizeof(reciveBuffer));
+                char buf[100];
+                memset(buf, '0', sizeof(buf));
+                numbRead = read(poll_fds[i].fd, buf, sizeof(buf));
                 if (numbRead == -1)
                     cout << "connectionManagerThread: read failed" << endl;
                 else {
+                    buf[numbRead] = 0;
                     for (auto conn = activeConnections.begin(); conn != activeConnections.end();) {
                         if (conn->sd == poll_fds[i].fd) {
+                            if((strncmp(buf, "exit", 4) == 0) || (numbRead == 0))
+                            {
+                                memset(buf, '0', sizeof(buf));
+                                strncpy(buf, "exit", 4);
+                                conn = activeConnections.erase(conn);
+                                close(conn->sd);
+                                reorganizeConnectionIds(activeConnections);
+                            }
                             cout << "\nMessage received from " << conn->ipAddress << endl;
                             cout << "Sender’s Port: <" << ntohs(conn->port) << ">" << endl;
+                            cout << "Message: " << buf << endl;
                             break;
-                        } else {
+                        }
+                        else {
                             ++conn;
                         }
-                    }
-                    cout << "Message: " << reciveBuffer << endl;
+                    }    
                     break;
                 }
             }
         }
     }
 }
+
 int ConnectionManager::onStart()
 {
     tcp_socket_t *sPointer = NULL;
@@ -146,17 +164,16 @@ int ConnectionManager::onStart()
         return FAILURE;
     }
 
-    serverConnection.id = 0;
-    serverConnection.sd = sPointer->sd;
-    serverConnection.port = serverListeningPort;
-    serverConnection.ipAddress = serverIPAddress;
-    activeConnections.push_back(serverConnection);
+    sPointer->id = 0;
+    sPointer->port = serverListeningPort;
+    sPointer->ipAddress = serverIPAddress;
+    activeConnections.push_back(*sPointer);
 
-    if (pthread_create(&threadID, NULL, &connectionManagerThread, NULL)) {
+    if (pthread_create(&threadID, NULL, &connectionManagerThread, sPointer)) {
         cerr << "ConnectionManager: " << __func__ << " " << __LINE__ << endl;
         return -1;
     }
-
+    pthread_detach(threadID);
     cout << "ConnectionManager: start successfully" << endl;
 
     return SUCCESS;
@@ -169,6 +186,40 @@ void ConnectionManager::displayIPAdrress()
 void ConnectionManager::displayPortNumber()
 {
     cout << "Listening port is: " << serverListeningPort << endl;
+}
+static void* recvDataThread(void *arg)
+{
+    // Trong luồng con, chờ dữ liệu từ socket
+    
+    int client = *(int *)arg;
+    auto tmp = activeConnections.begin();
+    for (auto conn = activeConnections.begin(); conn != activeConnections.end();) {
+        if (conn->sd == client) {
+            tmp = conn;
+            break;
+        } else {
+            ++conn;
+        }
+    }
+    char buf[256];
+    while (1)
+    {
+        int numberRead = recv(client, buf, sizeof(buf), 0);
+        if((strncmp(buf, "exit", 4) == 0) || (numberRead == 0))
+        {
+            memset(buf, '0', sizeof(buf));
+            strncpy(buf, "exit", 4);
+            break;
+        }
+        buf[numberRead] = 0;
+        cout << "\nMessage received from " << tmp->ipAddress << endl;
+        cout << "Sender’s Port: <" << tmp->port << ">" << endl;
+        cout << "Message: " << buf << endl;
+    }
+    tmp = activeConnections.erase(tmp);
+    close(tmp->sd);
+    reorganizeConnectionIds(activeConnections);
+    return 0;
 }
 int ConnectionManager::connectToDestination(string& destinationIP, int port)
 {
@@ -192,6 +243,14 @@ int ConnectionManager::connectToDestination(string& destinationIP, int port)
         close(serverFd);
         return false;
     }
+    pthread_t thread_id;
+    if (pthread_create(&thread_id, NULL, recvDataThread, (void *)&serverFd))
+    {
+        printf("Khong the tao luong!\n");
+        return 1;   
+    }
+    // Chuyển luồng sang chế độ tự giải phóng
+    pthread_detach(thread_id);
 
     newConnection.id = activeConnections.size();
     newConnection.sd = serverFd;
@@ -219,19 +278,12 @@ void ConnectionManager::displayAllActiveConnection()
     
 }
 
-void reorganizeConnectionIds(std::vector<tcp_socket_t>& connections) {
-    int newId = 1;
-    for (tcp_socket_t& conn : connections) {
-        conn.id = newId++;
-    }
-}
-
 bool ConnectionManager::terminateConnection(int connectionID)
 {
     bool isConnectionIDValid = false;
-
     for (auto conn = activeConnections.begin(); conn != activeConnections.end();) {
         if (conn->id == connectionID) {
+            write(conn->sd, "exit", 4);
             conn = activeConnections.erase(conn);
             close(conn->sd);
             isConnectionIDValid = true;

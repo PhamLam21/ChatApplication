@@ -1,6 +1,6 @@
 .PHONY: all clean
 
-CC := g++
+CC := g++ -pthread
 CFLAG := -c -fPIC -o
 
 BIN_DIR := ./bin

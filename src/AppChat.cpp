@@ -110,7 +110,7 @@ int AppChat::onStart()
 
             case 0:
                 /* code */
-                cout << "Exit program";
+                cout << "Exit program\n";
                 return 0;
 
             default:
