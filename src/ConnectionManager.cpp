@@ -189,7 +189,6 @@ void ConnectionManager::displayPortNumber()
 }
 static void* recvDataThread(void *arg)
 {
-    // Trong luồng con, chờ dữ liệu từ socket
     
     int client = *(int *)arg;
     auto tmp = activeConnections.begin();
